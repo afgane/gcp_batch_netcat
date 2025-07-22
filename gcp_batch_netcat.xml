@@ -1,0 +1,27 @@
+<tool id="gcp_batch_netcat" name="GCP Batch Netcat" version="0.1.1">
+    <description>Submit a job to GCP Batch and connect to an NFS server.</description>
+    <requirements>
+        <!-- <requirement type="package" version="529.0.0">google-cloud-sdk</requirement>
+        <requirement type="package" version="0.7.1">netcat</requirement> -->
+        <container type="docker">afgane/gcp-batch-netcat:0.2.0</container>
+    </requirements>
+    <command><![CDATA[
+python3 '$__tool_directory__/gcp_batch_netcat.py' --nfs_address '$nfs_address' --output '$output' --project '$project' --region '$region' --service_account_key '$service_account_key' --network '$network' --subnet '$subnet'
+    ]]></command>
+    <inputs>
+        <param name="region" type="text" label="GCP Batch Region" optional="false"/>
+        <param name="network" type="text" label="GCP Network name" optional="false"/>
+        <param name="subnet" type="text" label="GCP Subnet name" optional="false"/>
+        <param name="nfs_address" type="text" label="NFS Server Address" help="The address of the NFS server to connect to. If not provided, will be auto-detected." />
+        <param name="service_account_key" type="data" format="json" label="GCP Service Account Key File" help="JSON key file for GCP service account with Batch API permissions"/>
+        <param name="project" type="text" label="GCP Project ID" help="The ID of the GCP project to use. If not provided, will be extracted from the service account key."/>
+    </inputs>
+    <outputs>
+        <data name="output" format="txt"/>
+    </outputs>
+    <help><![CDATA[
+**What it does**
+
+Submits a job to GCP Batch that connects to the specified NFS server using netcat.
+    ]]></help>
+</tool>
