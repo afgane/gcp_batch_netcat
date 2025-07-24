@@ -1,6 +1,22 @@
 FROM google/cloud-sdk:latest
 
-RUN apt-get update && apt-get install -y python3 python3-pip netcat-openbsd
+# Install essential networking and debugging tools
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    netcat-openbsd \
+    iproute2 \
+    iputils-ping \
+    dnsutils \
+    curl \
+    wget \
+    telnet \
+    traceroute \
+    net-tools \
+    tcpdump \
+    nmap \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --break-system-packages google-cloud-batch
 

@@ -3,18 +3,124 @@ import json
 import logging
 import os
 import sys
-# import time
 import uuid
 from google.cloud import batch_v1
 
 # Configure logging to go to stdout instead of stderr to avoid Galaxy marking job as failed
-import sys
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
+
+def determine_test_target(args):
+    """Determine the target host and port based on test type"""
+
+    if args.test_type == 'custom':
+        if not args.custom_host:
+            raise ValueError("custom_host is required when test_type is 'custom'")
+        return args.custom_host, args.custom_port
+
+    elif args.test_type == 'nfs':
+        # Extract NFS server address if not provided
+        if args.nfs_address:
+            nfs_address = args.nfs_address
+            logger.info(f"Using provided NFS address: {nfs_address}")
+        else:
+            try:
+                # Try to detect NFS server from /galaxy/server/database/ mount
+                import subprocess
+                result = subprocess.run(['mount'], capture_output=True, text=True)
+                nfs_address = None
+
+                for line in result.stdout.split('\n'):
+                    if '/galaxy/server/database' in line and ':' in line:
+                        # Look for NFS mount pattern: server:/path on /galaxy/server/database
+                        parts = line.split()
+                        for part in parts:
+                            if ':' in part and part.count(':') == 1:
+                                nfs_address = part.split(':')[0]
+                                break
+                        if nfs_address:
+                            logger.info(f"Detected NFS address from mount: {nfs_address}")
+                            break
+
+                if not nfs_address:
+                    # Fallback: try to parse /proc/mounts
+                    try:
+                        with open('/proc/mounts', 'r') as f:
+                            for line in f:
+                                if '/galaxy/server/database' in line and ':' in line:
+                                    parts = line.split()
+                                    if len(parts) > 0 and ':' in parts[0]:
+                                        nfs_address = parts[0].split(':')[0]
+                                        logger.info(f"Detected NFS address from /proc/mounts: {nfs_address}")
+                                        break
+                    except:
+                        pass
+
+                if not nfs_address:
+                    raise ValueError("Could not auto-detect NFS server address from /galaxy/server/database/ mount")
+
+                logger.info(f"Auto-detected NFS address from mount: {nfs_address}")
+            except Exception as e:
+                logger.error(f"Failed to auto-detect NFS address: {e}")
+                raise
+        return nfs_address, 2049
+
+    elif args.test_type == 'galaxy_web':
+        # Try to detect Galaxy web service
+        try:
+            import subprocess
+            result = subprocess.run(['kubectl', 'get', 'svc', '-o', 'json'], capture_output=True, text=True)
+            if result.returncode == 0:
+                services = json.loads(result.stdout)
+                for item in services.get('items', []):
+                    name = item.get('metadata', {}).get('name', '')
+                    if 'galaxy' in name.lower() and ('web' in name.lower() or 'nginx' in name.lower()):
+                        # Found a Galaxy web service
+                        spec = item.get('spec', {})
+                        if spec.get('type') == 'LoadBalancer':
+                            ingress = item.get('status', {}).get('loadBalancer', {}).get('ingress', [])
+                            if ingress:
+                                ip = ingress[0].get('ip')
+                                if ip:
+                                    port = 80
+                                    for port_spec in spec.get('ports', []):
+                                        if port_spec.get('port'):
+                                            port = port_spec['port']
+                                            break
+                                    logger.info(f"Found Galaxy web service LoadBalancer: {ip}:{port}")
+                                    return ip, port
+                        # Fallback to ClusterIP
+                        cluster_ip = spec.get('clusterIP')
+                        if cluster_ip and cluster_ip != 'None':
+                            port = 80
+                            for port_spec in spec.get('ports', []):
+                                if port_spec.get('port'):
+                                    port = port_spec['port']
+                                    break
+                            logger.info(f"Found Galaxy web service ClusterIP: {cluster_ip}:{port}")
+                            return cluster_ip, port
+        except Exception as e:
+            logger.warning(f"Could not auto-detect Galaxy web service: {e}")
+
+        # Fallback: try common Galaxy service names
+        common_hosts = ['galaxy-web', 'galaxy-nginx', 'galaxy']
+        logger.info(f"Trying common Galaxy service name: {common_hosts[0]}")
+        return common_hosts[0], 80
+
+    elif args.test_type == 'k8s_dns':
+        # Test Kubernetes DNS resolution
+        return 'kubernetes.default.svc.cluster.local', 443
+
+    elif args.test_type == 'google_dns':
+        # Test external connectivity
+        return '8.8.8.8', 53
+
+    else:
+        raise ValueError(f"Unsupported test type: {args.test_type}")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -25,6 +131,10 @@ def main():
     parser.add_argument('--network', default='default', help='GCP Network name')
     parser.add_argument('--subnet', default='default', help='GCP Subnet name')
     parser.add_argument('--service_account_key', required=True)
+    parser.add_argument('--test_type', default='nfs', choices=['nfs', 'galaxy_web', 'k8s_dns', 'google_dns', 'custom'],
+                       help='Type of connectivity test to perform')
+    parser.add_argument('--custom_host', required=False, help='Custom host to test (required if test_type is custom)')
+    parser.add_argument('--custom_port', type=int, default=80, help='Custom port to test (default: 80)')
     args = parser.parse_args()
 
     # Set up authentication using the service account key
@@ -47,52 +157,13 @@ def main():
             logger.error(f"Failed to extract project ID from service account key: {e}")
             raise
 
-    # Extract NFS server address if not provided
-    if args.nfs_address:
-        nfs_address = args.nfs_address
-        logger.info(f"Using provided NFS address: {nfs_address}")
-    else:
-        try:
-            # Try to detect NFS server from /galaxy/server/database/ mount
-            import subprocess
-            result = subprocess.run(['mount'], capture_output=True, text=True)
-            nfs_address = None
-
-            for line in result.stdout.split('\n'):
-                if '/galaxy/server/database' in line and ':' in line:
-                    # Look for NFS mount pattern: server:/path on /galaxy/server/database
-                    parts = line.split()
-                    for part in parts:
-                        if ':' in part and part.count(':') == 1:
-                            nfs_address = part.split(':')[0]
-                            break
-                    if nfs_address:
-                        logger.info(f"Detected NFS address from mount: {nfs_address}")
-                        break
-
-            if not nfs_address:
-                # Fallback: try to parse /proc/mounts
-                try:
-                    with open('/proc/mounts', 'r') as f:
-                        for line in f:
-                            if '/galaxy/server/database' in line and ':' in line:
-                                parts = line.split()
-                                if len(parts) > 0 and ':' in parts[0]:
-                                    nfs_address = parts[0].split(':')[0]
-                                    logger.info(f"Detected NFS address from /proc/mounts: {nfs_address}")
-                                    break
-                except:
-                    pass
-
-            if not nfs_address:
-                raise ValueError("Could not auto-detect NFS server address from /galaxy/server/database/ mount")
-
-            logger.info(f"Auto-detected NFS address from mount: {nfs_address}")
-        except Exception as e:
-            logger.error(f"Failed to auto-detect NFS address: {e}")
-            raise
-
-    # time.sleep(10000)
+    # Determine target host and port based on test type
+    try:
+        target_host, target_port = determine_test_target(args)
+        logger.info(f"Target determined: {target_host}:{target_port}")
+    except Exception as e:
+        logger.error(f"Failed to determine target: {e}")
+        raise
 
     job_name = f'netcat-job-{uuid.uuid4()}'
     logger.info(f"Generated job name: {job_name}")
@@ -107,9 +178,84 @@ def main():
     runnable = batch_v1.Runnable()
     runnable.container = batch_v1.Runnable.Container()
     runnable.container.image_uri = "afgane/gcp-batch-netcat:0.2.0"
-    runnable.container.entrypoint = "/usr/bin/nc"
-    runnable.container.commands = ["-z", "-v", nfs_address, "2049"]
-    logger.debug(f"Container config: image={runnable.container.image_uri}, entrypoint={runnable.container.entrypoint}, commands={runnable.container.commands}")
+
+    # Create a comprehensive test script
+    test_script = f'''#!/bin/bash
+set -e
+echo "=== GCP Batch Connectivity Test ==="
+echo "Test Type: {args.test_type}"
+echo "Target: {target_host}:{target_port}"
+echo "Timestamp: $(date)"
+echo "Container hostname: $(hostname)"
+echo ""
+
+# Basic network info
+echo "=== Network Information ==="
+echo "Container IP addresses:"
+hostname -I
+echo "Default route:"
+ip route | grep default || echo "No default route found"
+echo ""
+
+# DNS configuration
+echo "=== DNS Configuration ==="
+echo "DNS servers:"
+cat /etc/resolv.conf | grep nameserver || echo "No nameservers found"
+echo ""
+
+# Test DNS resolution of target
+echo "=== DNS Resolution Test ==="
+echo "Resolving {target_host}:"
+nslookup {target_host} || {{
+    echo "DNS resolution failed for {target_host}"
+    echo "Trying with Google DNS (8.8.8.8):"
+    nslookup {target_host} 8.8.8.8 || echo "DNS resolution failed even with Google DNS"
+}}
+echo ""
+
+# Basic connectivity test
+echo "=== Primary Connectivity Test ==="
+echo "Testing connection to {target_host}:{target_port}..."
+timeout 30 nc -z -v -w 10 {target_host} {target_port}
+nc_result=$?
+echo "Netcat result: $nc_result"
+echo ""
+
+# Additional connectivity tests
+echo "=== Additional Connectivity Tests ==="
+echo "Testing Google DNS (8.8.8.8:53):"
+timeout 10 nc -z -v -w 5 8.8.8.8 53 && echo "✓ External DNS reachable" || echo "✗ External DNS unreachable"
+
+echo "Testing Kubernetes API (if accessible):"
+timeout 10 nc -z -v -w 5 kubernetes.default.svc.cluster.local 443 2>/dev/null && echo "✓ Kubernetes API reachable" || echo "✗ Kubernetes API unreachable"
+
+echo ""
+echo "=== Network Troubleshooting ==="
+echo "Route table:"
+ip route
+echo ""
+echo "ARP table:"
+arp -a 2>/dev/null || echo "ARP command not available"
+echo ""
+
+echo "=== Final Result ==="
+if [ $nc_result -eq 0 ]; then
+    echo "✓ SUCCESS: Connection to {target_host}:{target_port} successful"
+    exit 0
+else
+    echo "✗ FAILED: Connection to {target_host}:{target_port} failed"
+    echo "This suggests a network connectivity issue between GCP Batch and the target service."
+    echo "Common causes:"
+    echo "- Firewall rules blocking traffic"
+    echo "- Service not accessible from external networks"
+    echo "- Target service only accepting internal cluster traffic"
+    exit 1
+fi
+'''
+
+    runnable.container.entrypoint = "/bin/bash"
+    runnable.container.commands = ["-c", test_script]
+    logger.debug(f"Container config: image={runnable.container.image_uri}, entrypoint={runnable.container.entrypoint}")
 
     task = batch_v1.TaskSpec()
     task.runnables = [runnable]
@@ -154,7 +300,7 @@ def main():
     logger.info(f"Submitting job with name: {job_name}")
     logger.info(f"Target project: {project_id}")
     logger.info(f"Target Batch region: {args.region}")
-    logger.info(f"NFS target: {nfs_address}:2049")
+    logger.info(f"Test target: {target_host}:{target_port}")
 
     # Proceed with job submission
     try:
@@ -171,7 +317,10 @@ def main():
             f.write(f"Job UID: {job_response.uid}\n")
             f.write(f"Project: {project_id}\n")
             f.write(f"Region: {args.region}\n")
-            f.write(f"NFS Address: {nfs_address}:2049\n")
+            f.write(f"Test Type: {args.test_type}\n")
+            f.write(f"Target: {target_host}:{target_port}\n")
+            f.write(f"\nTo view job logs, run:\n")
+            f.write(f"gcloud logging read 'resource.type=gce_instance AND resource.labels.instance_id={job_name}' --project={project_id}\n")
 
     except Exception as e:
         logger.error(f"Error submitting job: {type(e).__name__}: {e}")
@@ -185,6 +334,8 @@ def main():
             f.write(f"Job name: {job_name}\n")
             f.write(f"Project: {project_id}\n")
             f.write(f"Region: {args.region}\n")
+            f.write(f"Test Type: {args.test_type}\n")
+            f.write(f"Target: {target_host}:{target_port}\n")
             f.write(f"Traceback:\n")
             f.write(traceback.format_exc())
 
