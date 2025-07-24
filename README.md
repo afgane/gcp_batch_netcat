@@ -1,13 +1,20 @@
 # GCP Batch Netcat Galaxy Tool
 
-A Galaxy tool that submits a job to Google Cloud Platform (GCP) Batch service to test connectivity to an NFS server using `netcat`. This tool is predominantly intended for use with Galaxy deployments using the Galaxy Helm chart, where it can verify network connectivity between GCP Batch workers and NFS storage systems.
+A Galaxy tool that submits a job to Google Cloud Platform (GCP) Batch service to test network connectivity to various services including NFS servers. This tool is predominantly intended for use with Galaxy deployments using the Galaxy Helm chart, where it can verify network connectivity between GCP Batch workers and critical services.
 
 ## Overview
 
-This tool creates and submits a GCP Batch job that runs a simple network connectivity test to an NFS server using `netcat` (nc). It's particularly useful for:
+This tool creates and submits a GCP Batch job that runs comprehensive network connectivity tests using various tools. It's particularly useful for:
 - Testing network connectivity between GCP Batch compute nodes and NFS storage
-- Validating that firewall rules allow communication on port 2049 (NFS)
+- Validating connectivity to Galaxy web services
+- Testing Kubernetes DNS resolution and external connectivity
 - Troubleshooting connectivity issues in Galaxy deployments on Kubernetes
+- Debugging firewall rules and network configuration
+
+**New Features:**
+- **Auto-Discovery**: Automatically discovers NFS LoadBalancer external IP addresses via Kubernetes API
+- **Multiple Test Types**: NFS, Galaxy web, Kubernetes DNS, Google DNS, and custom targets
+- **Enhanced Debugging**: Comprehensive network diagnostics with detailed logging
 
 The tool is available in the Main Tool Shed at:
 https://toolshed.g2.bx.psu.edu/view/enis/gcp_batch_netcat/
@@ -16,11 +23,30 @@ https://toolshed.g2.bx.psu.edu/view/enis/gcp_batch_netcat/
 
 This tool is specifically designed for Galaxy deployments using the Galaxy Helm chart on Google Kubernetes Engine (GKE). A sample deployment can be obtained using the [galaxy-k8s-boot repository](https://github.com/galaxyproject/galaxy-k8s-boot/).
 
+## Auto-Discovery of NFS LoadBalancer
+
+**Important**: The tool now intelligently discovers the correct NFS IP address for external access:
+
+1. **LoadBalancer Discovery** (Primary): Uses `kubectl` to find NFS services with LoadBalancer type and external IPs
+2. **Mount Detection** (Fallback): Extracts NFS IP from Galaxy's local mount (returns ClusterIP - may not work for external jobs)
+
+For reliable operation, ensure your NFS server is exposed via a LoadBalancer service. See `NFS_LOADBALANCER_GUIDE.md` for detailed setup instructions.
+
 ## Input Parameters Reference
 
 The Galaxy tool interface presents the following parameters:
 
 ### Required Parameters
+
+#### **Test Type**
+- **Galaxy Label**: "Test Type"
+- **Options**:
+  - NFS Server (port 2049) - Default
+  - Galaxy Web Service (port 80/443)
+  - Kubernetes DNS (kubernetes.default.svc.cluster.local:443)
+  - Google DNS (8.8.8.8:53)
+  - Custom Host/Port
+- **Description**: Type of connectivity test to perform
 
 #### **GCP Batch Region**
 - **Galaxy Label**: "GCP Batch Region"
@@ -32,7 +58,7 @@ The Galaxy tool interface presents the following parameters:
 - **Galaxy Label**: "GCP Network name"
 - **Description**: The name of the GCP VPC network in which Galaxy runs
 - **Examples**: `default`, `galaxy-vpc`
-- **Important**: The network must allow communication between Batch workers and the Galaxy NFS server
+- **Important**: The network must allow communication between Batch workers and the target services
 
 #### **GCP Subnet name**
 - **Galaxy Label**: "GCP Subnet name"

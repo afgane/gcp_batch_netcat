@@ -11,17 +11,15 @@ python3 '$__tool_directory__/gcp_batch_netcat.py'
 --service_account_key '$service_account_key'
 --network '$network'
 --subnet '$subnet'
-#if $nfs_address
-    --nfs_address '$nfs_address'
-#end if
+--nfs_address '$nfs_address'
     ]]></command>
     <inputs>
         <param name="region" type="text" label="GCP Batch Region" optional="false" help="Region where the Batch job will run (e.g., us-central1)"/>
         <param name="network" type="text" label="GCP Network name" optional="false" help="VPC network name where Galaxy is deployed"/>
         <param name="subnet" type="text" label="GCP Subnet name" optional="false" help="Subnet name where Galaxy is deployed"/>
+        <param name="nfs_address" type="text" label="NFS Server Address" help="The LoadBalancer external IP address of the NFS server (e.g., 10.150.0.17). This must be the external IP, not the internal ClusterIP." optional="false"/>
         <param name="service_account_key" type="data" format="json" label="GCP Service Account Key File" help="JSON key file for GCP service account with Batch API permissions"/>
         <param name="project" type="text" label="GCP Project ID" help="The ID of the GCP project to use. If not provided, will be extracted from the service account key." optional="true"/>
-        <param name="nfs_address" type="text" label="NFS Server Address" help="The address of the NFS server to connect to. Default is the LoadBalancer external IP. If not provided, will be auto-detected from Galaxy's database mount." optional="false"/>
     </inputs>
     <outputs>
         <data name="output" format="txt"/>
@@ -29,45 +27,26 @@ python3 '$__tool_directory__/gcp_batch_netcat.py'
     <help><![CDATA[
 **What it does**
 
-This enhanced tool submits a job to GCP Batch to test network connectivity between Batch workers and your NFS server. It runs comprehensive network debugging tests to help identify connectivity issues in Galaxy deployments on Google Kubernetes Engine (GKE).
+This tool submits a job to GCP Batch to test network connectivity between Batch workers and your NFS server. It provides network debugging to help identify connectivity issues in Galaxy deployments on Google Kubernetes Engine (GKE).
 
-**Enhanced Debugging Features**
+**Required: NFS LoadBalancer External IP**
 
-The tool now provides detailed network analysis including:
+You must provide the external IP address of your NFS server's LoadBalancer service. This is crucial because:
+- Galaxy sees the NFS server via its internal ClusterIP (e.g., 10.96.0.1)
+- GCP Batch jobs run outside the cluster and need the LoadBalancer external IP (e.g., 10.150.0.17)
 
-* **Network Interface Information**: IP addresses, routing tables
-* **DNS Configuration and Testing**: Nameserver configuration and resolution tests
-* **Primary Connectivity Test**: Connection to NFS server on port 2049
-* **Port Scanning**: Advanced port connectivity testing with nmap
-* **Additional Tests**: External connectivity (Google DNS), Kubernetes API access
-* **Network Path Tracing**: Traceroute to identify routing issues
-* **Socket Statistics**: Active network connections
-* **System Information**: Container OS, kernel, architecture details
+**Finding Your NFS LoadBalancer IP**
 
-**Troubleshooting Network Issues**
+To find the correct IP address, run:
+```
+kubectl get svc -n nfs-provisioner
+```
 
-This tool is particularly useful when Galaxy jobs fail to access shared storage. The comprehensive test output helps identify the root cause:
+Look for the "EXTERNAL-IP" column for LoadBalancer type services.
 
-* **Connection timeouts**: Usually indicates firewall rules blocking traffic or services not accessible from external networks
-* **DNS resolution failures**: May indicate DNS configuration issues
-* **External connectivity works but NFS fails**: Suggests NFS service is ClusterIP type (internal only)
+**Important: LoadBalancer Configuration**
 
-**Viewing Detailed Results**
+For NFS connectivity from GCP Batch jobs, your NFS server must be exposed via a LoadBalancer service with an external IP. Internal ClusterIP services are not accessible from external Batch workers.
 
-* **Basic results**: Available in the Galaxy output file
-* **Detailed debugging logs**: Check Google Cloud Logging for comprehensive network analysis:
-  ```
-  gcloud logging read 'resource.type=gce_instance AND jsonPayload.job_name="netcat-job-xyz"' --project=your-project
-  ```
-
-**Common Solutions**
-
-If the test fails to connect to your NFS server:
-
-1. **Use NodePort service** to expose NFS externally for testing
-2. **Configure LoadBalancer** with proper firewall rules for production
-3. **Consider Google Cloud Filestore** for managed NFS storage
-
-The enhanced debugging output will guide you to the specific networking issue and solution.
     ]]></help>
 </tool>

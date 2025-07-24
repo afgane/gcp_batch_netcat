@@ -1,0 +1,10 @@
+name: gcp_batch_netcat
+owner: enis
+description: A tool to submit a job to GCP Batch and connect to an NFS server.
+long_description: |
+    This tool submits a job to the Google Cloud Batch service. The job will attempt to connect to a user-specified NFS server using netcat.
+    This is intended to be run within a GKE cluster with authentication to GCP Batch.
+categories:
+  - Data Export
+type: unrestricted
+remote_repository_url: https://github.com/afgane/gcp_batch_netcat
