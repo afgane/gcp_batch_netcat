@@ -25,9 +25,28 @@ python3 '$__tool_directory__/gcp_batch_netcat.py'
         <data name="output" format="txt"/>
     </outputs>
     <help><![CDATA[
+    <help><![CDATA[
 **What it does**
 
-This tool submits a job to GCP Batch to test network connectivity between Batch workers and your NFS server. It provides network debugging to help identify connectivity issues in Galaxy deployments on Google Kubernetes Engine (GKE).
+This tool submits a job to GCP Batch to test network connectivity and NFS mounting between Batch workers and your NFS server. It uses a custom Galaxy VM image and provides comprehensive testing including NFS mount operations, CVMFS repository access, and directory listings to help identify connectivity issues in Galaxy deployments on Google Kubernetes Engine (GKE).
+
+**Test Capabilities**
+
+The tool performs comprehensive testing using a container running on the custom `galaxy-k8s-boot-v2025-08-10` VM image:
+- Network connectivity test (netcat to port 2049)
+- NFS mount test with both NFSv3 and NFSv4
+- Directory listing of the NFS share
+- Galaxy-specific directory detection
+- CVMFS repository access test (via bind mount from host VM)
+- Galaxy reference data verification
+- Disk usage and mount information
+
+**Architecture**
+
+The tool uses a hybrid approach:
+- **Host VM**: Custom `galaxy-k8s-boot-v2025-08-10` image with CVMFS client and NFS utilities
+- **Container**: `afgane/gcp-batch-netcat:0.2.0` with network testing tools
+- **Bind Mount**: `/cvmfs` from host VM is bind-mounted into the container for CVMFS access
 
 **Required: NFS LoadBalancer External IP**
 
@@ -39,14 +58,35 @@ You must provide the external IP address of your NFS server's LoadBalancer servi
 
 To find the correct IP address, run:
 ```
-kubectl get svc -n nfs-provisioner
+kubectl get svc | grep nfs
+kubectl get svc <nfs-service-name> -o wide
 ```
 
 Look for the "EXTERNAL-IP" column for LoadBalancer type services.
 
 **Important: LoadBalancer Configuration**
 
-For NFS connectivity from GCP Batch jobs, your NFS server must be exposed via a LoadBalancer service with an external IP. Internal ClusterIP services are not accessible from external Batch workers.
+For NFS connectivity from GCP Batch jobs, your NFS server must be exposed via a LoadBalancer service with an external IP. The tool also requires:
+- NFS ports (2049, 111, 20048) accessible from external networks
+- Proper NFS export configuration allowing external mounts
+- VM runs with sufficient privileges for mount operations
+
+**Troubleshooting Results**
+
+The tool provides detailed diagnostics:
+- **Network connectivity success + NFS mount success**: Everything working correctly
+- **Network connectivity success + NFS mount failure**: Network works but NFS configuration issues
+- **Network connectivity failure**: Firewall or LoadBalancer configuration issues
+- **CVMFS mount success/failure**: Indicates broader network connectivity and VM image capabilities
+
+**Best Practices**
+
+1. Ensure your NFS service is exposed as type LoadBalancer with an external IP
+2. Verify GCP firewall rules allow traffic from Batch subnet to NFS LoadBalancer IP on ports 2049, 111, and 20048
+3. Check NFS export configuration allows mounting from external IPs
+4. Test the connection manually: `telnet <EXTERNAL-IP> 2049`
+5. Verify the custom VM image is available in your GCP project
+    ]]>
 
     ]]></help>
 </tool>

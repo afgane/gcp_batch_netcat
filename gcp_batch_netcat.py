@@ -81,12 +81,6 @@ def main():
     client = batch_v1.BatchServiceClient()
     logger.info("Batch client created successfully")
 
-    # Define the job using the Python client library objects
-    logger.info("Building job specification...")
-    runnable = batch_v1.Runnable()
-    runnable.container = batch_v1.Runnable.Container()
-    runnable.container.image_uri = "afgane/gcp-batch-netcat:0.2.0"
-
     # Create a comprehensive test script
     test_script = f'''#!/bin/bash
 set -e
@@ -94,6 +88,18 @@ echo "=== GCP Batch NFS Connectivity Test ==="
 echo "Target: {target_host}:{target_port}"
 echo "Timestamp: $(date)"
 echo "Container hostname: $(hostname)"
+echo "Host VM Image: galaxy-k8s-boot-v2025-08-10"
+echo "Container Image: afgane/gcp-batch-netcat:0.2.0"
+echo ""
+
+# Basic system info
+echo "=== System Information ==="
+echo "OS Release:"
+cat /etc/os-release | head -5 2>/dev/null || echo "OS release info not available"
+echo "Kernel version:"
+uname -r
+echo "Architecture:"
+uname -m
 echo ""
 
 # Basic network info
@@ -128,6 +134,14 @@ nc_result=$?
 echo "Netcat result: $nc_result"
 echo ""
 
+# NFS client capabilities
+echo "=== NFS Client Information ==="
+echo "NFS client version:"
+/sbin/mount.nfs -V 2>/dev/null || echo "mount.nfs not available"
+echo "RPC services:"
+rpcinfo -p 2>/dev/null || echo "rpcinfo not available"
+echo ""
+
 # Additional connectivity tests
 echo "=== Additional Connectivity Tests ==="
 echo "Testing external connectivity (Google DNS 8.8.8.8:53):"
@@ -139,12 +153,138 @@ echo "Route table:"
 ip route
 echo ""
 
-echo "=== Final Result ==="
-if [ $nc_result -eq 0 ]; then
-    echo "✓ SUCCESS: Connection to NFS server {target_host}:{target_port} successful"
-    exit 0
+# NFS Mount Test
+echo "=== NFS Mount Test ==="
+MOUNT_POINT="/tmp/nfs_test_mount"
+echo "Creating mount point: $MOUNT_POINT"
+mkdir -p "$MOUNT_POINT"
+
+echo "Attempting to mount NFS share..."
+echo "Command: mount -t nfs -o vers=3,tcp {target_host}:/ $MOUNT_POINT"
+
+# Try mounting the NFS share
+mount_result=1
+if mount -t nfs -o vers=3,tcp {target_host}:/ "$MOUNT_POINT" 2>&1; then
+    mount_result=0
+    echo "✓ NFS mount successful!"
+
+    echo ""
+    echo "=== NFS Share Contents ==="
+    echo "Long listing of NFS share root:"
+    ls -la "$MOUNT_POINT" 2>/dev/null || echo "Could not list directory contents"
+
+    echo ""
+    echo "Disk usage of NFS share:"
+    df -h "$MOUNT_POINT" 2>/dev/null || echo "Could not get disk usage"
+
+    echo ""
+    echo "Mount information:"
+    mount | grep "$MOUNT_POINT" || echo "Mount info not found"
+
+    # Try to find common Galaxy directories
+    echo ""
+    echo "=== Looking for Galaxy directories ==="
+    for dir in "database" "database/files" "database/objects" "tools" "shed_tools"; do
+        if [ -d "$MOUNT_POINT/$dir" ]; then
+            echo "✓ Found: $dir"
+            ls -la "$MOUNT_POINT/$dir" | head -10
+        else
+            echo "✗ Not found: $dir"
+        fi
+    done
+
+    echo ""
+    echo "Unmounting NFS share..."
+    umount "$MOUNT_POINT" 2>/dev/null && echo "✓ Unmount successful" || echo "✗ Unmount failed"
 else
-    echo "✗ FAILED: Connection to NFS server {target_host}:{target_port} failed"
+    echo "✗ NFS mount failed"
+    echo "Mount error details above"
+
+    # Try alternative mount options
+    echo ""
+    echo "Trying alternative NFS mount options..."
+    echo "Command: mount -t nfs -o vers=4,tcp {target_host}:/ $MOUNT_POINT"
+    if mount -t nfs -o vers=4,tcp {target_host}:/ "$MOUNT_POINT" 2>&1; then
+        mount_result=0
+        echo "✓ NFS v4 mount successful!"
+        ls -la "$MOUNT_POINT" 2>/dev/null || echo "Could not list directory contents"
+        umount "$MOUNT_POINT" 2>/dev/null && echo "✓ Unmount successful" || echo "✗ Unmount failed"
+    else
+        echo "✗ NFS v4 mount also failed"
+    fi
+fi
+
+# CVMFS Mount Test
+echo ""
+echo "=== CVMFS Access Test ==="
+echo "Checking if CVMFS is bind-mounted from host VM..."
+if [ -d "/cvmfs" ]; then
+    echo "✓ /cvmfs directory exists (bind-mounted from host)"
+    ls -la /cvmfs 2>/dev/null || echo "Could not list /cvmfs contents"
+
+    echo ""
+    echo "Checking for Galaxy CVMFS repository..."
+    cvmfs_result=1
+    if [ -d "/cvmfs/data.galaxyproject.org" ]; then
+        cvmfs_result=0
+        echo "✓ Galaxy CVMFS repository accessible!"
+
+        echo ""
+        echo "=== CVMFS Repository Contents ==="
+        echo "Long listing of CVMFS repository root:"
+        ls -la "/cvmfs/data.galaxyproject.org" 2>/dev/null | head -10 || echo "Could not list directory contents"
+
+        echo ""
+        echo "Checking for Galaxy reference data directories:"
+        for dir in "byhand" "location" "tool-data" "genomes"; do
+            if [ -d "/cvmfs/data.galaxyproject.org/$dir" ]; then
+                echo "✓ Found CVMFS directory: $dir"
+                ls "/cvmfs/data.galaxyproject.org/$dir" | head -5 2>/dev/null || echo "Could not list contents"
+            else
+                echo "✗ Not found: $dir"
+            fi
+        done
+
+        echo ""
+        echo "CVMFS mount information from host:"
+        mount | grep cvmfs || echo "CVMFS mount info not visible from container"
+    else
+        echo "✗ Galaxy CVMFS repository not found at /cvmfs/data.galaxyproject.org"
+        echo "This may indicate:"
+        echo "- CVMFS client not running on host VM"
+        echo "- Repository not mounted on host"
+        echo "- Bind mount not properly configured"
+    fi
+else
+    echo "✗ /cvmfs directory not found"
+    echo "This indicates the bind mount from host VM failed"
+    echo "Expected: /cvmfs from host VM bind-mounted into container"
+fi
+
+echo ""
+echo "=== Final Result ==="
+if [ $nc_result -eq 0 ] && [ $mount_result -eq 0 ]; then
+    echo "✓ SUCCESS: Both network connectivity and NFS mount to {target_host}:{target_port} successful"
+    if [ $cvmfs_result -eq 0 ]; then
+        echo "✓ BONUS: CVMFS repository mount also successful"
+    else
+        echo "ℹ INFO: CVMFS mount failed (may not be available in this image)"
+    fi
+    exit 0
+elif [ $nc_result -eq 0 ]; then
+    echo "⚠ PARTIAL SUCCESS: Network connectivity successful but NFS mount failed"
+    echo "Network connection to {target_host}:{target_port} works, but NFS mounting failed."
+    echo "This suggests:"
+    echo "- NFS server is reachable but may not be properly configured"
+    echo "- NFS export permissions may be incorrect"
+    echo "- NFS version mismatch (tried NFSv3 and NFSv4)"
+    echo "- Firewall may allow port 2049 but block other NFS ports (111, 20048)"
+    if [ $cvmfs_result -eq 0 ]; then
+        echo "✓ CVMFS repository mount was successful"
+    fi
+    exit 1
+else
+    echo "✗ FAILED: Network connectivity to NFS server {target_host}:{target_port} failed"
     echo "This suggests a network connectivity issue between GCP Batch and the NFS server."
     echo "Common causes:"
     echo "- Firewall rules blocking NFS traffic (port 2049)"
@@ -155,13 +295,29 @@ else
     echo "- Ensure NFS service has type LoadBalancer with external IP"
     echo "- Check GCP firewall rules allow traffic from Batch subnet to NFS"
     echo "- Verify the IP address is the LoadBalancer external IP, not ClusterIP"
+    if [ $cvmfs_result -eq 0 ]; then
+        echo ""
+        echo "✓ CVMFS repository mount was successful (good network connectivity to external services)"
+    fi
     exit 1
 fi
 '''
 
+    # Define the job using the Python client library objects
+    logger.info("Building job specification...")
+    runnable = batch_v1.Runnable()
+    runnable.container = batch_v1.Runnable.Container()
+    runnable.container.image_uri = "afgane/gcp-batch-netcat:0.2.0"
+
+    # Bind mount /cvmfs from the host VM (which has CVMFS client) into the container
+    cvmfs_volume = batch_v1.Volume()
+    cvmfs_volume.host_path = "/cvmfs"
+    cvmfs_volume.mount_path = "/cvmfs"
+    runnable.container.volumes = [cvmfs_volume]
+
     runnable.container.entrypoint = "/bin/bash"
     runnable.container.commands = ["-c", test_script]
-    logger.debug(f"Container config: image={runnable.container.image_uri}, entrypoint={runnable.container.entrypoint}")
+    logger.debug(f"Container config: image={runnable.container.image_uri}, with /cvmfs bind mount from custom VM")
 
     task = batch_v1.TaskSpec()
     task.runnables = [runnable]
@@ -186,8 +342,17 @@ fi
     network_policy = batch_v1.AllocationPolicy.NetworkPolicy()
     network_policy.network_interfaces = [network_interface]
 
+    # Instance policy with custom VM image
+    instance_policy = batch_v1.AllocationPolicy.InstancePolicy()
+    instance_policy.machine_type = "e2-medium"  # Specify machine type for custom image
+    instance_policy.boot_disk = batch_v1.AllocationPolicy.Disk()
+    instance_policy.boot_disk.image = f"projects/{project_id}/global/images/galaxy-k8s-boot-v2025-08-10"
+    instance_policy.boot_disk.size_gb = 99
+    logger.debug(f"Using custom VM image: {instance_policy.boot_disk.image}")
+
     allocation_policy = batch_v1.AllocationPolicy()
     allocation_policy.network = network_policy
+    allocation_policy.instances = [instance_policy]
 
     job = batch_v1.Job()
     job.task_groups = [task_group]

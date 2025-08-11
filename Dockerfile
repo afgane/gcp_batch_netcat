@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     tcpdump \
     nmap \
     vim \
+    nfs-common \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --break-system-packages google-cloud-batch
@@ -26,4 +27,5 @@ RUN groupadd -g 10001 galaxy && useradd -u 10001 -g 10001 -m -s /bin/bash galaxy
 RUN echo "alias ll='ls -l'" >> /home/galaxy/.bashrc && \
     chown galaxy:galaxy /home/galaxy/.bashrc
 
-USER galaxy
+# Note: Running as root to allow NFS mounting operations
+# USER galaxy
