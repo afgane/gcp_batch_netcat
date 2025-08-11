@@ -310,10 +310,8 @@ fi
     runnable.container.image_uri = "afgane/gcp-batch-netcat:0.2.0"
 
     # Bind mount /cvmfs from the host VM (which has CVMFS client) into the container
-    cvmfs_volume = batch_v1.Volume()
-    cvmfs_volume.host_path = "/cvmfs"
-    cvmfs_volume.mount_path = "/cvmfs"
-    runnable.container.volumes = [cvmfs_volume]
+    # Use the docker-style volume syntax for bind mounting host paths
+    runnable.container.volumes = ["/cvmfs:/cvmfs:ro"]
 
     runnable.container.entrypoint = "/bin/bash"
     runnable.container.commands = ["-c", test_script]
