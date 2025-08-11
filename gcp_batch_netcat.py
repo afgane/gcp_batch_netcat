@@ -348,9 +348,13 @@ fi
     instance_policy.boot_disk.size_gb = 99
     logger.debug(f"Using custom VM image: {instance_policy.boot_disk.image}")
 
+    # Wrap the instance policy in InstancePolicyOrTemplate
+    instance_policy_or_template = batch_v1.AllocationPolicy.InstancePolicyOrTemplate()
+    instance_policy_or_template.policy = instance_policy
+
     allocation_policy = batch_v1.AllocationPolicy()
     allocation_policy.network = network_policy
-    allocation_policy.instances = [instance_policy]
+    allocation_policy.instances = [instance_policy_or_template]
 
     job = batch_v1.Job()
     job.task_groups = [task_group]
