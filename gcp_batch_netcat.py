@@ -159,14 +159,18 @@ MOUNT_POINT="/tmp/nfs_test_mount"
 echo "Creating mount point: $MOUNT_POINT"
 mkdir -p "$MOUNT_POINT"
 
-echo "Attempting to mount NFS share..."
-echo "Command: mount -t nfs -o vers=3,tcp {target_host}:/ $MOUNT_POINT"
+echo "First, let's check what NFS exports are available..."
+showmount -e {target_host} 2>/dev/null || echo "showmount failed - server may not support it"
 
-# Try mounting the NFS share
+echo ""
+echo "Attempting to mount NFS share with NFSv4.2 (matching Galaxy pod)..."
+echo "Command: mount -t nfs -o vers=4.2,tcp,sec=sys {target_host}:/ $MOUNT_POINT"
+
+# Try mounting the NFS share with NFSv4.2 first (matching Galaxy)
 mount_result=1
-if mount -t nfs -o vers=3,tcp {target_host}:/ "$MOUNT_POINT" 2>&1; then
+if mount -t nfs -o vers=4.2,tcp,sec=sys {target_host}:/ "$MOUNT_POINT" 2>&1; then
     mount_result=0
-    echo "✓ NFS mount successful!"
+    echo "✓ NFS v4.2 mount successful!"
 
     echo ""
     echo "=== NFS Share Contents ==="
@@ -180,6 +184,20 @@ if mount -t nfs -o vers=3,tcp {target_host}:/ "$MOUNT_POINT" 2>&1; then
     echo ""
     echo "Mount information:"
     mount | grep "$MOUNT_POINT" || echo "Mount info not found"
+
+    # Look for export subdirectories (since Galaxy mounts a specific export path)
+    echo ""
+    echo "=== Looking for export directories ==="
+    if [ -d "$MOUNT_POINT/export" ]; then
+        echo "✓ Found: export directory"
+        ls -la "$MOUNT_POINT/export" | head -10 2>/dev/null || echo "Could not list export contents"
+
+        # Look for PVC subdirectories
+        echo "Looking for PVC directories in export..."
+        find "$MOUNT_POINT/export" -name "pvc-*" -type d | head -5 2>/dev/null || echo "No PVC directories found"
+    else
+        echo "✗ No export directory found"
+    fi
 
     # Try to find common Galaxy directories
     echo ""
@@ -197,21 +215,8 @@ if mount -t nfs -o vers=3,tcp {target_host}:/ "$MOUNT_POINT" 2>&1; then
     echo "Unmounting NFS share..."
     umount "$MOUNT_POINT" 2>/dev/null && echo "✓ Unmount successful" || echo "✗ Unmount failed"
 else
-    echo "✗ NFS mount failed"
+    echo "✗ NFS v4.2 mount failed"
     echo "Mount error details above"
-
-    # Try alternative mount options
-    echo ""
-    echo "Trying alternative NFS mount options..."
-    echo "Command: mount -t nfs -o vers=4,tcp {target_host}:/ $MOUNT_POINT"
-    if mount -t nfs -o vers=4,tcp {target_host}:/ "$MOUNT_POINT" 2>&1; then
-        mount_result=0
-        echo "✓ NFS v4 mount successful!"
-        ls -la "$MOUNT_POINT" 2>/dev/null || echo "Could not list directory contents"
-        umount "$MOUNT_POINT" 2>/dev/null && echo "✓ Unmount successful" || echo "✗ Unmount failed"
-    else
-        echo "✗ NFS v4 mount also failed"
-    fi
 fi
 
 # CVMFS Mount Test
@@ -236,7 +241,7 @@ if [ -d "/cvmfs" ]; then
 
         echo ""
         echo "Checking for Galaxy reference data directories:"
-        for dir in "byhand" "location" "tool-data" "genomes"; do
+        for dir in "byhand" "managed"; do
             if [ -d "/cvmfs/data.galaxyproject.org/$dir" ]; then
                 echo "✓ Found CVMFS directory: $dir"
                 ls "/cvmfs/data.galaxyproject.org/$dir" | head -5 2>/dev/null || echo "Could not list contents"
