@@ -240,7 +240,7 @@ if [ -d "/cvmfs" ]; then
         ls -la "/cvmfs/data.galaxyproject.org" 2>/dev/null | head -10 || echo "Could not list directory contents"
 
         echo ""
-        echo "Checking for Galaxy reference data directories:"
+        echo "Listing Galaxy reference data directories:"
         for dir in "byhand" "managed"; do
             if [ -d "/cvmfs/data.galaxyproject.org/$dir" ]; then
                 echo "✓ Found CVMFS directory: $dir"
@@ -249,6 +249,22 @@ if [ -d "/cvmfs" ]; then
                 echo "✗ Not found: $dir"
             fi
         done
+
+        echo ""
+        echo "=== CVMFS File Access Test ==="
+        echo "Testing access to specific Galaxy reference file..."
+        echo "File: /cvmfs/data.galaxyproject.org/byhand/Arabidopsis_thaliana_TAIR10/seq/Arabidopsis_thaliana_TAIR10.fa.fai"
+
+        CVMFS_TEST_FILE="/cvmfs/data.galaxyproject.org/byhand/Arabidopsis_thaliana_TAIR10/seq/Arabidopsis_thaliana_TAIR10.fa.fai"
+        if [ -f "$CVMFS_TEST_FILE" ]; then
+            echo "✓ File exists, reading first 10 lines:"
+            head "$CVMFS_TEST_FILE" 2>/dev/null || echo "Could not read file contents"
+        else
+            echo "✗ File not found"
+            echo "Checking if parent directories exist:"
+            [ -d "/cvmfs/data.galaxyproject.org/byhand/Arabidopsis_thaliana_TAIR10" ] && echo "  ✓ Arabidopsis_thaliana_TAIR10 directory exists" || echo "  ✗ Arabidopsis_thaliana_TAIR10 directory missing"
+            [ -d "/cvmfs/data.galaxyproject.org/byhand/Arabidopsis_thaliana_TAIR10/seq" ] && echo "  ✓ seq directory exists" || echo "  ✗ seq directory missing"
+        fi
 
         echo ""
         echo "CVMFS mount information from host:"
@@ -266,6 +282,7 @@ else
     echo "Expected: /cvmfs from host VM bind-mounted into container"
 fi
 
+
 echo ""
 echo "=== Final Result ==="
 if [ $nc_result -eq 0 ] && [ $mount_result -eq 0 ]; then
@@ -282,7 +299,6 @@ elif [ $nc_result -eq 0 ]; then
     echo "This suggests:"
     echo "- NFS server is reachable but may not be properly configured"
     echo "- NFS export permissions may be incorrect"
-    echo "- NFS version mismatch (tried NFSv3 and NFSv4)"
     echo "- Firewall may allow port 2049 but block other NFS ports (111, 20048)"
     if [ $cvmfs_result -eq 0 ]; then
         echo "✓ CVMFS repository mount was successful"
