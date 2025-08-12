@@ -88,8 +88,8 @@ echo "=== GCP Batch NFS Connectivity Test ==="
 echo "Target: {target_host}:{target_port}"
 echo "Timestamp: $(date)"
 echo "Container hostname: $(hostname)"
-echo "Host VM Image: galaxy-k8s-boot-v2025-08-10"
-echo "Container Image: afgane/gcp-batch-netcat:0.2.0"
+echo "Host VM Image: galaxy-k8s-boot-v2025-08-12"
+echo "Container Image: afgane/gcp-batch-netcat:0.3.0"
 echo ""
 
 # Basic system info
@@ -307,7 +307,7 @@ fi
     logger.info("Building job specification...")
     runnable = batch_v1.Runnable()
     runnable.container = batch_v1.Runnable.Container()
-    runnable.container.image_uri = "afgane/gcp-batch-netcat:0.2.0"
+    runnable.container.image_uri = "afgane/gcp-batch-netcat:0.3.0"
 
     # Bind mount /cvmfs from the host VM (which has CVMFS client) into the container
     # Use the docker-style volume syntax for bind mounting host paths
@@ -344,7 +344,7 @@ fi
     instance_policy = batch_v1.AllocationPolicy.InstancePolicy()
     instance_policy.machine_type = "e2-medium"  # Specify machine type for custom image
     instance_policy.boot_disk = batch_v1.AllocationPolicy.Disk()
-    instance_policy.boot_disk.image = f"projects/{project_id}/global/images/galaxy-k8s-boot-v2025-08-10"
+    instance_policy.boot_disk.image = f"projects/{project_id}/global/images/galaxy-k8s-boot-v2025-08-12"
     instance_policy.boot_disk.size_gb = 99
     logger.debug(f"Using custom VM image: {instance_policy.boot_disk.image}")
 
