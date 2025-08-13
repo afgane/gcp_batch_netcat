@@ -326,17 +326,55 @@ fi
 
     # Define the job using the Python client library objects
     logger.info("Building job specification...")
+
+    # Escape the test script for use in docker command
+    escaped_test_script = test_script.replace("'", "'\"'\"'")
+
+    # Create a host script that triggers CVMFS mount and then runs the container
+    host_script = f'''#!/bin/bash
+set -e
+echo "=== Pre-Container Host Script ==="
+echo "Timestamp: $(date)"
+echo "Host VM Image: galaxy-k8s-boot-v2025-08-12"
+echo "Running on host before container starts..."
+echo ""
+
+echo "=== Triggering CVMFS Mount ==="
+echo "Checking CVMFS autofs status:"
+mount | grep cvmfs || echo "No CVMFS mounts yet"
+
+echo ""
+echo "Triggering CVMFS mount by accessing repository:"
+ls /cvmfs/data.galaxyproject.org/ || echo "Could not access CVMFS repository"
+
+echo ""
+echo "After access - checking CVMFS mounts:"
+mount | grep cvmfs || echo "Still no CVMFS mounts visible"
+
+echo ""
+echo "Testing specific file access from host:"
+if [ -f "/cvmfs/data.galaxyproject.org/byhand/Arabidopsis_thaliana_TAIR10/seq/Arabidopsis_thaliana_TAIR10.fa.fai" ]; then
+    echo "✓ CVMFS file accessible from host"
+    head -3 "/cvmfs/data.galaxyproject.org/byhand/Arabidopsis_thaliana_TAIR10/seq/Arabidopsis_thaliana_TAIR10.fa.fai"
+else
+    echo "✗ CVMFS file not accessible from host"
+fi
+
+echo ""
+echo "=== Starting Container ==="
+echo "Running container with bind-mounted CVMFS..."
+
+# Run the container with the test script
+docker run --rm \\
+    -v /cvmfs:/cvmfs:ro \\
+    afgane/gcp-batch-netcat:0.3.0 \\
+    /bin/bash -c '{escaped_test_script}'
+'''
+
     runnable = batch_v1.Runnable()
-    runnable.container = batch_v1.Runnable.Container()
-    runnable.container.image_uri = "afgane/gcp-batch-netcat:0.3.0"
-
-    # Bind mount /cvmfs from the host VM (which has CVMFS client) into the container
-    # Use the docker-style volume syntax for bind mounting host paths
-    runnable.container.volumes = ["/cvmfs:/cvmfs:ro"]
-
-    runnable.container.entrypoint = "/bin/bash"
-    runnable.container.commands = ["-c", test_script]
-    logger.debug(f"Container config: image={runnable.container.image_uri}, with /cvmfs bind mount from custom VM")
+    runnable.script = batch_v1.Runnable.Script()
+    runnable.script.text = host_script
+    logger.debug(f"Host script configured to trigger CVMFS mount and run container")
 
     task = batch_v1.TaskSpec()
     task.runnables = [runnable]
