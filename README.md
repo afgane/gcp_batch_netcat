@@ -116,13 +116,12 @@ Before using this tool in Galaxy, ensure you have:
 - Access to the custom VM image: e.g., `galaxy-k8s-boot-v2025-08-12`
 
 ### Network Configuration
-- Firewall rule allowing traffic from the Batch subnet to NFS server (all required NFS ports):
+- Firewall rule allowing traffic from the Batch subnet to NFS server:
 ```
 gcloud compute firewall-rules create allow-nfs-from-batch \
   --network=NETWORK_NAME \
-  --allow=tcp:2049,tcp:111,tcp:20048,udp:111,udp:2049
+  --allow=tcp:2049
 ```
-**Important**: Port 111 (RPC portmapper) is critical for NFS mounting to work. Without it, you'll get "operation not permitted" errors even if port 2049 is accessible.
 
 ### NFS Server Setup
 - The NFS service must be accessible via LoadBalancer with external IP (typically private within VPC)
@@ -141,12 +140,6 @@ spec:
   ports:
   - name: nfs
     port: 2049
-    protocol: TCP
-  - name: rpcbind
-    port: 111
-    protocol: TCP
-  - name: mountd
-    port: 20048
     protocol: TCP
 ```
 
