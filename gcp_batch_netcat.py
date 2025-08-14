@@ -153,70 +153,149 @@ echo "Route table:"
 ip route
 echo ""
 
-# NFS Mount Test
-echo "=== NFS Mount Test ==="
-MOUNT_POINT="/tmp/nfs_test_mount"
-echo "Creating mount point: $MOUNT_POINT"
-mkdir -p "$MOUNT_POINT"
-
-echo "First, let's check what NFS exports are available..."
-showmount -e {target_host} 2>/dev/null || echo "showmount failed - server may not support it"
-
-echo ""
-echo "Attempting to mount NFS share with NFSv4.2 (matching Galaxy pod)..."
-echo "Command: mount -t nfs -o vers=4.2,tcp,sec=sys {target_host}:/ $MOUNT_POINT"
-
-# Try mounting the NFS share with NFSv4.2 first (matching Galaxy)
+# NFS Mount Test - Check if Batch mounted it for us
+echo "=== NFS Mount Test (via Batch Volume) ==="
+NFS_MOUNT_POINT="/mnt/nfs"
 mount_result=1
-if mount -t nfs -o vers=4.2,tcp,sec=sys {target_host}:/ "$MOUNT_POINT" 2>&1; then
-    mount_result=0
-    echo "✓ NFS v4.2 mount successful!"
 
-    echo ""
-    echo "=== NFS Share Contents ==="
-    echo "Long listing of NFS share root:"
-    ls -la "$MOUNT_POINT" 2>/dev/null || echo "Could not list directory contents"
+echo "Checking if NFS is mounted by Batch at $NFS_MOUNT_POINT..."
+if [ -d "$NFS_MOUNT_POINT" ]; then
+    echo "✓ NFS mount point exists"
 
-    echo ""
-    echo "Disk usage of NFS share:"
-    df -h "$MOUNT_POINT" 2>/dev/null || echo "Could not get disk usage"
+    # Check if it's actually mounted
+    if mount | grep "$NFS_MOUNT_POINT"; then
+        mount_result=0
+        echo "✓ NFS mounted by Batch successfully!"
 
-    echo ""
-    echo "Mount information:"
-    mount | grep "$MOUNT_POINT" || echo "Mount info not found"
+        echo ""
+        echo "=== NFS Share Contents ==="
+        echo "Long listing of NFS share:"
+        ls -la "$NFS_MOUNT_POINT" 2>/dev/null || echo "Could not list directory contents"
 
-    # Look for export subdirectories (since Galaxy mounts a specific export path)
-    echo ""
-    echo "=== Looking for export directories ==="
-    if [ -d "$MOUNT_POINT/export" ]; then
-        echo "✓ Found: export directory"
-        ls -la "$MOUNT_POINT/export" | head -10 2>/dev/null || echo "Could not list export contents"
+        echo ""
+        echo "Disk usage of NFS share:"
+        df -h "$NFS_MOUNT_POINT" 2>/dev/null || echo "Could not get disk usage"
 
-        # Look for PVC subdirectories
-        echo "Looking for PVC directories in export..."
-        find "$MOUNT_POINT/export" -name "pvc-*" -type d | head -5 2>/dev/null || echo "No PVC directories found"
-    else
-        echo "✗ No export directory found"
-    fi
+        # Look for export subdirectories
+        echo ""
+        echo "=== Looking for export directories ==="
+        if [ -d "$NFS_MOUNT_POINT/export" ]; then
+            echo "✓ Found: export directory"
+            ls -la "$NFS_MOUNT_POINT/export" | head -10 2>/dev/null || echo "Could not list export contents"
 
-    # Try to find common Galaxy directories
-    echo ""
-    echo "=== Looking for Galaxy directories ==="
-    for dir in "database" "database/files" "database/objects" "tools" "shed_tools"; do
-        if [ -d "$MOUNT_POINT/$dir" ]; then
-            echo "✓ Found: $dir"
-            ls -la "$MOUNT_POINT/$dir" | head -10
+            # Look for PVC subdirectories
+            echo "Looking for PVC directories in export..."
+            find "$NFS_MOUNT_POINT/export" -name "pvc-*" -type d | head -5 2>/dev/null || echo "No PVC directories found"
         else
-            echo "✗ Not found: $dir"
+            echo "✗ No export directory found"
         fi
-    done
 
-    echo ""
-    echo "Unmounting NFS share..."
-    umount "$MOUNT_POINT" 2>/dev/null && echo "✓ Unmount successful" || echo "✗ Unmount failed"
+        # Try to find common Galaxy directories
+        echo ""
+        echo "=== Looking for Galaxy directories ==="
+
+        # First check if they exist directly in the NFS root
+        galaxy_dirs_in_root=0
+        for dir in "jobs_directory" "shed_tools" "objects" "tools" "cache" "config"; do
+            if [ -d "$NFS_MOUNT_POINT/$dir" ]; then
+                echo "✓ Found in root: $dir"
+                ls -la "$NFS_MOUNT_POINT/$dir" | head -5
+                galaxy_dirs_in_root=$((galaxy_dirs_in_root + 1))
+            fi
+        done
+
+        if [ $galaxy_dirs_in_root -eq 0 ]; then
+            echo "✗ No Galaxy directories found in NFS root"
+        else
+            echo "✓ Found $galaxy_dirs_in_root Galaxy directories in NFS root"
+        fi
+
+        # Then check inside any PVC directories under export
+        if [ -d "$NFS_MOUNT_POINT/export" ]; then
+            echo ""
+            echo "=== Checking PVC directories for Galaxy structure ==="
+
+            # Find all PVC directories
+            pvc_count=0
+            for pvc_dir in $(find "$NFS_MOUNT_POINT/export" -name "pvc-*" -type d 2>/dev/null); do
+                pvc_count=$((pvc_count + 1))
+                echo ""
+                echo "Checking PVC ($pvc_count): $(basename $pvc_dir)"
+                echo "  Full path: $pvc_dir"
+
+                # Show directory listing of PVC
+                echo "  Contents:"
+                ls -la "$pvc_dir" | head -10 | sed 's/^/    /'
+
+                # Check for Galaxy directories inside this PVC
+                galaxy_dirs_found=0
+                for dir in "jobs_directory" "shed_tools" "objects" "tools" "cache" "config" "deps" "tmp"; do
+                    if [ -d "$pvc_dir/$dir" ]; then
+                        echo "  ✓ Found Galaxy directory: $dir"
+                        # Show a sample of contents
+                        ls -la "$pvc_dir/$dir" 2>/dev/null | head -3 | sed 's/^/      /'
+                        galaxy_dirs_found=$((galaxy_dirs_found + 1))
+                    fi
+                done
+
+                # Check for Galaxy-specific files
+                galaxy_files_found=0
+                for file in "galaxy.yml" "universe_wsgi.ini" "config/galaxy.yml" "results.sqlite" "celery-beat-schedule"; do
+                    if [ -f "$pvc_dir/$file" ]; then
+                        echo "  ✓ Found Galaxy file: $file"
+                        galaxy_files_found=$((galaxy_files_found + 1))
+                    fi
+                done
+
+                total_indicators=$((galaxy_dirs_found + galaxy_files_found))
+                if [ $total_indicators -gt 0 ]; then
+                    echo "  🎯 This PVC contains $galaxy_dirs_found Galaxy directories and $galaxy_files_found Galaxy files"
+
+                    # Test write access
+                    test_file="$pvc_dir/.batch_test_file_$(date +%s)"
+                    if echo "test" > "$test_file" 2>/dev/null; then
+                        echo "  ✓ Write access confirmed"
+                        rm -f "$test_file" 2>/dev/null
+                    else
+                        echo "  ✗ No write access"
+                    fi
+
+                    # Test specific Galaxy directories access
+                    if [ -d "$pvc_dir/jobs_directory" ]; then
+                        echo "  � Jobs directory details:"
+                        du -sh "$pvc_dir/jobs_directory" 2>/dev/null | sed 's/^/      /' || echo "      Could not get size"
+                        job_count=$(find "$pvc_dir/jobs_directory" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+                        echo "      Job subdirectories: $job_count"
+                    fi
+
+                    if [ -d "$pvc_dir/shed_tools" ]; then
+                        echo "  🔧 Shed tools directory details:"
+                        du -sh "$pvc_dir/shed_tools" 2>/dev/null | sed 's/^/      /' || echo "      Could not get size"
+                        tool_count=$(find "$pvc_dir/shed_tools" -name "*.py" -o -name "*.xml" 2>/dev/null | wc -l)
+                        echo "      Tool files (py/xml): $tool_count"
+                    fi
+                else
+                    echo "  ✗ No Galaxy directories or files found in this PVC"
+                fi
+            done
+
+            if [ $pvc_count -eq 0 ]; then
+                echo "✗ No PVC directories found in export"
+            else
+                echo ""
+                echo "📊 Summary: Found $pvc_count PVC directories in export"
+            fi
+        else
+            echo ""
+            echo "✗ No export directory found in NFS mount"
+        fi
+    else
+        echo "✗ NFS mount point exists but is not mounted"
+        echo "This suggests Batch volume configuration may be incorrect"
+    fi
 else
-    echo "✗ NFS v4.2 mount failed"
-    echo "Mount error details above"
+    echo "✗ NFS mount point $NFS_MOUNT_POINT does not exist"
+    echo "This suggests Batch volume was not configured"
 fi
 
 # CVMFS Mount Test
@@ -327,7 +406,7 @@ fi
     # Define the job using the Python client library objects
     logger.info("Building job specification...")
 
-    # Escape the test script for use in docker command
+    # Escape the test script for use in docker command (outside f-string to avoid backslash issues)
     escaped_test_script = test_script.replace("'", "'\"'\"'")
 
     # Create a host script that triggers CVMFS mount and then runs the container
@@ -362,11 +441,12 @@ fi
 
 echo ""
 echo "=== Starting Container ==="
-echo "Running container with bind-mounted CVMFS..."
+echo "Running container with bind-mounted CVMFS and NFS..."
 
-# Run the container with the test script
+# Run the container with the test script and volume mounts
 docker run --rm \\
     -v /cvmfs:/cvmfs:ro \\
+    -v /mnt/nfs:/mnt/nfs:rw \\
     afgane/gcp-batch-netcat:0.3.0 \\
     /bin/bash -c '{escaped_test_script}'
 '''
@@ -382,6 +462,16 @@ docker run --rm \\
     task.compute_resource.cpu_milli = 1000
     task.compute_resource.memory_mib = 1024
     logger.debug(f"Compute resources: CPU={task.compute_resource.cpu_milli}m, Memory={task.compute_resource.memory_mib}MiB")
+
+    # Configure NFS volume in the task
+    volume = batch_v1.Volume()
+    volume.nfs = batch_v1.NFS()
+    volume.nfs.server = target_host
+    volume.nfs.remote_path = "/"  # Root of the NFS export
+    volume.mount_path = "/mnt/nfs"
+
+    task.volumes = [volume]
+    logger.debug(f"NFS volume configured: {target_host}:/ -> /mnt/nfs")
 
     task_group = batch_v1.TaskGroup()
     task_group.task_count = 1
