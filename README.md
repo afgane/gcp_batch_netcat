@@ -18,8 +18,7 @@ useful for:
 - Troubleshooting connectivity issues in Galaxy deployments on Kubernetes
 - Debugging firewall rules, NFS export configurations, and CVMFS client setup
 - Comprehensive Network Diagnostics: DNS resolution, routing, and external connectivity
-- Custom VM Integration: Uses galaxy-k8s-boot-v2025-08-12 image with pre-configured CVMFS client
-
+- Custom VM Integration: Uses (e.g., `galaxy-k8s-boot-v2025-08-12`) image with pre-configured CVMFS client and NFS support
 The tool is available in the Main Tool Shed at:
 https://toolshed.g2.bx.psu.edu/view/enis/gcp_batch_netcat/
 
@@ -114,14 +113,6 @@ Before using this tool in Galaxy, ensure you have:
 - A service account with "Batch Job Editor" role
 - Downloaded JSON key file for the service account
 - Access to the custom VM image: e.g., `galaxy-k8s-boot-v2025-08-12`
-
-### Network Configuration
-- Firewall rule allowing traffic from the Batch subnet to NFS server:
-```
-gcloud compute firewall-rules create allow-nfs-from-batch \
-  --network=NETWORK_NAME \
-  --allow=tcp:2049
-```
 
 ### NFS Server Setup
 - The NFS service must be accessible via LoadBalancer with external IP (typically private within VPC)
