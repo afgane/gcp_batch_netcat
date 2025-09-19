@@ -1,4 +1,4 @@
-<tool id="gcp_batch_netcat" name="GCP Batch Netcat" version="0.2.0">
+<tool id="gcp_batch_netcat" name="GCP Batch Netcat" version="0.3.0">
     <description>Submit a job to GCP Batch to test network connectivity.</description>
     <requirements>
         <container type="docker">afgane/gcp-batch-netcat:0.2.0</container>
